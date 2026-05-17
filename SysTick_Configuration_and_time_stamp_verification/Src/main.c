@@ -23,44 +23,43 @@
   #warning "FPU is not initialized, but the project is compiling for an FPU. Please initialize the FPU before use."
 #endif
 
+
 #define STRVR (*((uint32_t*)0xE000E014))
-
-void task1_handler(void);
-void task2_handler(void);
-void task3_handler(void);
-void task4_handler(void);
+#define STCSR (*((uint32_t*)0xE000E010))
 
 
+#define DEMCR           (*(volatile uint32_t*)0xE000EDFC)
+#define DWT_CTRL        (*(volatile uint32_t*)0xE0001000)
+#define DWT_CYCCNT      (*(volatile uint32_t*)0xE0001004)
+
+void timestamp_init(void)
+{
+    /* Enable trace */
+    DEMCR |= (1 << 24);
+
+    /* Reset counter */
+    DWT_CYCCNT = 0;
+
+    /* Enable cycle counter */
+    DWT_CTRL |= (1 << 0);
+}
+
+volatile uint32_t timestamp;
+void SysTick_Handler(void){
+	uint32_t curr_timestamp = DWT_CYCCNT;
+	uint32_t time = (curr_timestamp-timestamp)/168.0f;
+	timestamp = DWT_CYCCNT;
+}
 
 
 int main(void)
 {
     /* Loop forever */
-	STRVR = 168000;
-
+	timestamp_init();
+	timestamp = DWT_CYCCNT;
+	STRVR = 168000-1;
+	STCSR |= 0x7;
+	timestamp = DWT_CYCCNT;
 	for(;;);
 }
 
-void task1_handler(void){
-	while(1){
-		printf("Task 1 \n");
-	}
-}
-
-void task2_handler(void){
-	while(1){
-		printf("Task 2 \n");
-	}
-}
-
-void task3_handler(void){
-	while(1){
-		printf("Task 3 \n");
-	}
-}
-
-void task4_handler(void){
-	while(1){
-		printf("Task 4 \n");
-	}
-}

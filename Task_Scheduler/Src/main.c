@@ -16,31 +16,134 @@
  ******************************************************************************
  */
 
-#include <stdint.h>
-#include <stdio.h>
+#include "main.h"
+#include "SysTick.h"
 
-#if !defined(__SOFT_FP__) && defined(__ARM_FP)
-  #warning "FPU is not initialized, but the project is compiling for an FPU. Please initialize the FPU before use."
-#endif
+uint32_t psp_of_tasks[MAX_TASKS];
 
-#define STRVR (*((uint32_t*)0xE000E014))
+uint32_t task1_stack[SIZE_TASK_STACK];
+uint32_t task2_stack[SIZE_TASK_STACK];
+uint32_t task3_stack[SIZE_TASK_STACK];
+uint32_t task4_stack[SIZE_TASK_STACK];
+uint32_t scheduler_stack[SIZE_SCHEDULER_STACK];
 
-void task1_handler(void);
-void task2_handler(void);
-void task3_handler(void);
-void task4_handler(void);
-
-
-
-
+volatile uint8_t current_task = 0;
 int main(void)
 {
-    /* Loop forever */
-	STRVR = 168000;
-
+	init_scheduler_stack((uint32_t)(scheduler_stack+SIZE_SCHEDULER_STACK));
+	init_tasks();
+	enable_processor_faults();
+	sysTick_init(1000);
+	switch_sp_to_psp();
+	start_first_task();
 	for(;;);
 }
 
+uint32_t get_task_psp_value(void){
+	return psp_of_tasks[current_task];
+}
+// When this function returns the psp value of current task will be in R0 and you can use
+// this R0 value further
+void select_next_task(void){
+	current_task = (current_task + 1)% MAX_TASKS; //Round Robin fashion
+}
+
+void save_psp_value(uint32_t current_psp_value){
+	psp_of_tasks[current_task] = current_psp_value;
+}
+//Now whenever the function is called, the first arugument is passed thorugh R0 register
+// So while calling the function through assembly code always ensure before calling the function
+// Put correct value is R0
+
+__attribute__((naked)) void PendSV_Handler(){
+	//1. Extract out the PSP first
+	__asm volatile("MRS R0,PSP"); // Successfully extracted PSP into R0
+
+	//2. Push the remaining contents at that memory location pointed by R0
+	__asm volatile("STMDB R0!, {R4-R11}");
+	// R4 to R11 will be pushed in the correct memory and the contents of R0 will be updated appropirate
+	// Thus R0 will be containing the correct value of the PSP of task 1
+
+	//3. Now store this R0 value in the psp_of_tasks[current_task]
+	//__asm volatile (
+	//    "MOV %0, R0"
+	//    : "=r"(psp_of_tasks[current_task])
+	//);
+	__asm volatile ("PUSH {LR}");          // save EXC_RETURN value
+	__asm volatile ("BL save_psp_value");  // LR gets overwritten here
+	//4. Select next task
+	__asm volatile ("BL select_next_task"); // Select next task
+	//5. Get the current task PSP value now
+	__asm volatile ("BL get_task_psp_value");
+	//Finally pop out the LR stored
+	__asm volatile ("POP {LR}");          // save EXC_RETURN value
+
+	// Once this BL return at this point you will have current task psp value in reg R0
+
+	//6. Pop out R4-R11 (stack frame 2 - SF2) from the current task private stack
+	__asm volatile ("LDM R0!, {R4-R11}");
+
+	//7. Now store R0 to PSP
+	__asm volatile ("MSR PSP, R0");
+
+	// Flush the pipeline
+	__asm volatile ("ISB");
+
+	//8. Return using EXC_RETURN stores in LR
+	__asm volatile ("BX LR"); // The stack frame 1 i.e. R0-R3, xPSR, LR, PC are popped by hardware.
+}
+
+
+void SysTick_Handler(void){
+	ICSR |= (1U << 28);
+//	printf("Inside SysTick Handler \n");
+}
+
+__attribute__((naked)) void init_scheduler_stack(uint32_t sch_top_of_stack_addr){
+	__asm volatile("MSR MSP,R0");
+	__asm volatile("BX LR");
+}
+
+
+
+uint32_t* init_task_stack(uint32_t* sp, void (*task_fn)(void))
+{
+    /* Hardware stacked registers */
+	//1. Get the top of that task's stack array
+
+	//2. Place a fake exception stack frame on it
+
+	//3. Save the resulting stack pointer into psp_of_tasks[]
+    *(--sp) = 0x01000000;          // xPSR (Thumb bit set)
+    *(--sp) = (uint32_t)task_fn;   // PC
+    *(--sp) = 0xFFFFFFFD;          // LR (EXC_RETURN)- To return to Thread mode using PSP
+
+    *(--sp) = 0x00000000;          // R12
+    *(--sp) = 0x00000000;          // R3
+    *(--sp) = 0x00000000;          // R2
+    *(--sp) = 0x00000000;          // R1
+    *(--sp) = 0x00000000;          // R0
+
+    /* Software stacked registers */
+
+    *(--sp) = 0x00000000;          // R11
+    *(--sp) = 0x00000000;          // R10
+    *(--sp) = 0x00000000;          // R9
+    *(--sp) = 0x00000000;          // R8
+    *(--sp) = 0x00000000;          // R7
+    *(--sp) = 0x00000000;          // R6
+    *(--sp) = 0x00000000;          // R5
+    *(--sp) = 0x00000000;          // R4
+
+    return sp;
+}
+
+void init_tasks(void) {
+    psp_of_tasks[0] = (uint32_t)init_task_stack(task1_stack + SIZE_TASK_STACK, task1_handler);
+    psp_of_tasks[1] = (uint32_t)init_task_stack(task2_stack + SIZE_TASK_STACK, task2_handler);
+    psp_of_tasks[2] = (uint32_t)init_task_stack(task3_stack + SIZE_TASK_STACK, task3_handler);
+    psp_of_tasks[3] = (uint32_t)init_task_stack(task4_stack + SIZE_TASK_STACK, task4_handler);
+}
 void task1_handler(void){
 	while(1){
 		printf("Task 1 \n");
@@ -63,4 +166,36 @@ void task4_handler(void){
 	while(1){
 		printf("Task 4 \n");
 	}
+}
+
+void enable_processor_faults(void){
+	volatile uint32_t *pSHCSR = (uint32_t*)0xE000ED24;
+
+	*pSHCSR |= (1<<16); //MEM FAULT
+	*pSHCSR |= (1<<17); //BUS FAULT
+	*pSHCSR |= (1<<18); //USAGE FAULT
+}
+
+__attribute__((naked)) void start_first_task(void){
+	// 1. We already have the value of PSP from the previous function call switch_sp_to_psp();
+	__asm volatile("POP {R4-R11}");
+	//Once the function return we would have the PSP of current task in reg R0
+	__asm volatile("MOV LR, =0xFFFFFFFD");
+  //2. Simply BX LR
+	__asm volatile("BX LR");
+
+}
+
+__attribute__((naked)) void switch_sp_to_psp(void){
+	//Load PSP with current task private stack pointer
+	__asm volatile (
+	    "MSR PSP, %0"     // assembly instruction
+	    :                 // output operands
+	    : "r"(psp_of_tasks[current_task]) // input operand
+	);
+	__asm volatile ("MRS R0,CONTROL");
+	__asm volatile ("ORR R0, R0, #0x02 ");
+	__asm volatile ("MSR CONTROL, R0");
+	__asm volatile ("ISB");
+	__asm volatile ("BX LR");
 }

@@ -45,10 +45,14 @@ void timestamp_init(void)
 }
 
 volatile uint32_t timestamp;
+volatile uint32_t delta_cycles;
+
 void SysTick_Handler(void){
-	uint32_t curr_timestamp = DWT_CYCCNT;
-	uint32_t time = (curr_timestamp-timestamp)/168.0f;
-	timestamp = DWT_CYCCNT;
+    uint32_t curr = DWT_CYCCNT;
+
+    delta_cycles = curr - timestamp;
+
+    timestamp = curr;
 }
 
 
@@ -57,9 +61,11 @@ int main(void)
     /* Loop forever */
 	timestamp_init();
 	timestamp = DWT_CYCCNT;
-	STRVR = 168000-1;
+	STRVR = 16000-1;
 	STCSR |= 0x7;
 	timestamp = DWT_CYCCNT;
-	for(;;);
+	for(;;){
+		float time_us = delta_cycles / 16.0f;
+	}
 }
 

@@ -27,9 +27,11 @@ uint32_t task3_stack[SIZE_TASK_STACK];
 uint32_t task4_stack[SIZE_TASK_STACK];
 uint32_t scheduler_stack[SIZE_SCHEDULER_STACK];
 
+
 volatile uint8_t current_task = 0;
 int main(void)
 {
+
 	init_scheduler_stack((uint32_t)(scheduler_stack+SIZE_SCHEDULER_STACK));
 	init_tasks();
 	enable_processor_faults();
@@ -118,22 +120,22 @@ uint32_t* init_task_stack(uint32_t* sp, void (*task_fn)(void))
     *(--sp) = (uint32_t)task_fn;   // PC
     *(--sp) = 0xFFFFFFFD;          // LR (EXC_RETURN)- To return to Thread mode using PSP
 
-    *(--sp) = 0x00000000;          // R12
-    *(--sp) = 0x00000000;          // R3
-    *(--sp) = 0x00000000;          // R2
-    *(--sp) = 0x00000000;          // R1
-    *(--sp) = 0x00000000;          // R0
+    *(--sp) = 0x00000001;          // R12
+    *(--sp) = 0x00000002;          // R3
+    *(--sp) = 0x00000003;          // R2
+    *(--sp) = 0x00000004;          // R1
+    *(--sp) = 0x00000005;          // R0
 
     /* Software stacked registers */
 
-    *(--sp) = 0x00000000;          // R11
-    *(--sp) = 0x00000000;          // R10
-    *(--sp) = 0x00000000;          // R9
-    *(--sp) = 0x00000000;          // R8
-    *(--sp) = 0x00000000;          // R7
-    *(--sp) = 0x00000000;          // R6
-    *(--sp) = 0x00000000;          // R5
-    *(--sp) = 0x00000000;          // R4
+    *(--sp) = 0x00000006;          // R11
+    *(--sp) = 0x00000007;          // R10
+    *(--sp) = 0x00000008;          // R9
+    *(--sp) = 0x00000009;          // R8
+    *(--sp) = 0x00000010;          // R7
+    *(--sp) = 0x00000011;          // R6
+    *(--sp) = 0x00000012;          // R5
+    *(--sp) = 0x00000013;          // R4
 
     return sp;
 }
@@ -176,14 +178,53 @@ void enable_processor_faults(void){
 	*pSHCSR |= (1<<18); //USAGE FAULT
 }
 
-__attribute__((naked)) void start_first_task(void){
-	// 1. We already have the value of PSP from the previous function call switch_sp_to_psp();
-	__asm volatile("POP {R4-R11}");
-	//Once the function return we would have the PSP of current task in reg R0
-	__asm volatile("MOV LR, =0xFFFFFFFD");
-  //2. Simply BX LR
-	__asm volatile("BX LR");
+//__attribute__((naked)) void start_first_task(void){
+//	// 1. We already have the value of PSP from the previous function call switch_sp_to_psp();
+//	__asm volatile("POP {R4-R11}");
+//	//Once the function return we would have the PSP of current task in reg R0
+//	__asm volatile("LDR LR, =0xFFFFFFFD");
+//  //2. Simply BX LR
+//	__asm volatile("BX LR");
+//
+//}
 
+__attribute__((naked)) void start_first_task(void){
+    __asm volatile("SVC #0");
+}
+void __attribute__((naked)) SVC_Handler(void){
+    __asm volatile(
+        // Figure out which SVC number was called
+        // PC on stack points to instruction after SVC
+        // SVC instruction itself is 2 bytes back → read the immediate
+        "MRS R0, PSP              \n"  // get caller's stack
+        "LDR R1, [R0, #24]        \n"  // load stacked PC
+        "LDRB R0, [R1, #-2]       \n"  // read SVC number from instruction
+        "CMP R0, #0               \n"
+        "BEQ svc_start_task       \n"
+        "CMP R0, #1               \n"
+        "BEQ svc_something_else   \n"
+        "BX LR                    \n"  // unknown SVC, just return
+
+        "svc_start_task:          \n"
+        "LDR R0, =psp_of_tasks    \n"
+        "LDR R1, =current_task    \n"
+        "LDRB R1, [R1]            \n"
+        "LDR R0, [R0, R1, LSL #2]\n"
+        "MSR PSP, R0              \n"
+        "MRS R0, CONTROL          \n"
+        "ORR R0, R0, #0x02        \n"
+        "MSR CONTROL, R0          \n"
+        "ISB                      \n"
+        "MRS R0, PSP              \n"
+        "LDM R0!, {R4-R11}        \n"
+        "MSR PSP, R0              \n"
+        "LDR LR, =0xFFFFFFFD      \n"
+        "BX LR                    \n"
+
+        "svc_something_else:      \n"
+        // handle SVC #1 here
+        "BX LR                    \n"
+    );
 }
 
 __attribute__((naked)) void switch_sp_to_psp(void){
@@ -198,4 +239,18 @@ __attribute__((naked)) void switch_sp_to_psp(void){
 	__asm volatile ("MSR CONTROL, R0");
 	__asm volatile ("ISB");
 	__asm volatile ("BX LR");
+}
+
+void HardFault_Handler(){
+
+	while(1);
+}
+void MemManage_Handler(){
+	while(1);
+}
+void BusFault_Handler(){
+	while(1);
+}
+void UsageFault_Handler(){
+	while(1);
 }

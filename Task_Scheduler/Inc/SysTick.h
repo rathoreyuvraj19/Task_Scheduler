@@ -12,7 +12,7 @@
 
 // SysTick registers
 
-#define SYSTICK_TIM_CLK  168000000U
+#define SYSTICK_TIM_CLK  16000000U
 
 #define STRVR (*((volatile uint32_t*)0xE000E014))
 #define STCSR (*((volatile uint32_t*)0xE000E010))

@@ -17,7 +17,7 @@
 #endif
 #define SIZE_TASK_STACK 1024U
 #define SIZE_SCHEDULER_STACK 1024U
-#define MAX_TASKS 4
+#define MAX_TASKS 5
 
 #define SRAM_START 0x20000000U
 #define SRAM_SIZE ((1024)*(128)) //Bytes
@@ -30,6 +30,7 @@ void task1_handler(void);
 void task2_handler(void);
 void task3_handler(void);
 void task4_handler(void);
+void idle_task_handler(void);
 
 
 //volatile uint32_t timestamp;

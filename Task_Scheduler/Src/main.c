@@ -20,13 +20,26 @@
 #include "SysTick.h"
 #include "led.h"
 
-uint32_t psp_of_tasks[MAX_TASKS];
+#define TASK_STATE_READY  0
+#define TASK_STATE_BLOCKED 1
+typedef struct {
+	uint32_t psp_value;  /* saved stack pointer                  */
+	uint32_t block_count;/* ticks remaining before wakeup        */
+	uint8_t current_state;
+}TCB_t;
+
+TCB_t tcb[MAX_TASKS];
+volatile uint32_t tick_count = 0;
+
+//uint32_t psp_of_tasks[MAX_TASKS];
 
 uint32_t task1_stack[SIZE_TASK_STACK];
 uint32_t task2_stack[SIZE_TASK_STACK];
 uint32_t task3_stack[SIZE_TASK_STACK];
 uint32_t task4_stack[SIZE_TASK_STACK];
+uint32_t idle_task_stack[SIZE_TASK_STACK];
 uint32_t scheduler_stack[SIZE_SCHEDULER_STACK];
+uint32_t* task_stack_list[MAX_TASKS] = { idle_task_stack, task1_stack,task2_stack,task3_stack,task4_stack, };
 
 
 volatile uint8_t current_task = 0;
@@ -44,16 +57,27 @@ int main(void)
 }
 
 uint32_t get_task_psp_value(void){
-	return psp_of_tasks[current_task];
+	return tcb[current_task].psp_value;
 }
 // When this function returns the psp value of current task will be in R0 and you can use
 // this R0 value further
 void select_next_task(void){
-	current_task = (current_task + 1)% MAX_TASKS; //Round Robin fashion
+//	current_task = (current_task + 1)% MAX_TASKS; //Round Robin fashion
+//	while(tcb[current_task].current_state == TASK_STATE_BLOCKED ){
+//		current_task = (current_task + 1)% MAX_TASKS;
+//	}
+	for(int i = 1 ; i < MAX_TASKS ; i++){
+		current_task = (current_task + 1)% MAX_TASKS;
+		if(tcb[current_task].current_state == TASK_STATE_READY && current_task != 0){
+			return;
+		}
+	}
+	 /* no user task ready -> run idle task */
+	current_task = 0;
 }
 
 void save_psp_value(uint32_t current_psp_value){
-	psp_of_tasks[current_task] = current_psp_value;
+	tcb[current_task].psp_value = current_psp_value;
 }
 //Now whenever the function is called, the first arugument is passed thorugh R0 register
 // So while calling the function through assembly code always ensure before calling the function
@@ -99,8 +123,16 @@ __attribute__((naked)) void PendSV_Handler(){
 
 
 void SysTick_Handler(void){
+	tick_count++;
+	for(int i = 1 ; i < MAX_TASKS ; i++){
+		if(tcb[i].current_state == TASK_STATE_BLOCKED){
+			if(tcb[i].block_count == 0){
+				tcb[i].current_state = TASK_STATE_READY;
+			}
+			tcb[i].block_count--;
+		}
+	}
 	ICSR |= (1U << 28);
-//	printf("Inside SysTick Handler \n");
 }
 
 __attribute__((naked)) void init_scheduler_stack(uint32_t sch_top_of_stack_addr){
@@ -108,6 +140,11 @@ __attribute__((naked)) void init_scheduler_stack(uint32_t sch_top_of_stack_addr)
 	__asm volatile("BX LR");
 }
 
+void task_delay(uint32_t delay_tick_count){
+	tcb[current_task].block_count = delay_tick_count;
+	tcb[current_task].current_state = TASK_STATE_BLOCKED;
+	ICSR |= (1U << 28);// Pend the PendSV to switch the context
+}
 
 
 uint32_t* init_task_stack(uint32_t* sp, void (*task_fn)(void))
@@ -141,45 +178,71 @@ uint32_t* init_task_stack(uint32_t* sp, void (*task_fn)(void))
 
     return sp;
 }
+uint32_t task_handler_list[MAX_TASKS] = {
+		(uint32_t)idle_task_handler,
+		(uint32_t)task1_handler,
+		(uint32_t)task2_handler,
+		(uint32_t)task3_handler,
+		(uint32_t)task4_handler
+};
 
 void init_tasks(void) {
-    psp_of_tasks[0] = (uint32_t)init_task_stack(task1_stack + SIZE_TASK_STACK, task1_handler);
-    psp_of_tasks[1] = (uint32_t)init_task_stack(task2_stack + SIZE_TASK_STACK, task2_handler);
-    psp_of_tasks[2] = (uint32_t)init_task_stack(task3_stack + SIZE_TASK_STACK, task3_handler);
-    psp_of_tasks[3] = (uint32_t)init_task_stack(task4_stack + SIZE_TASK_STACK, task4_handler);
+//    psp_of_tasks[0] = (uint32_t)init_task_stack(task1_stack + SIZE_TASK_STACK, task1_handler);
+//    psp_of_tasks[1] = (uint32_t)init_task_stack(task2_stack + SIZE_TASK_STACK, task2_handler);
+//    psp_of_tasks[2] = (uint32_t)init_task_stack(task3_stack + SIZE_TASK_STACK, task3_handler);
+//    psp_of_tasks[3] = (uint32_t)init_task_stack(task4_stack + SIZE_TASK_STACK, task4_handler);
+      for(int i = 0; i < MAX_TASKS ; i++){
+    	  tcb[i].psp_value = (uint32_t)init_task_stack(task_stack_list[i] + SIZE_TASK_STACK, (void (*)(void))task_handler_list[i]);
+    	  tcb[i].block_count = 0;
+    	  tcb[i].current_state = TASK_STATE_READY;
+      }
 }
 void task1_handler(void){
-	//Red LED
 	while(1){
-		led_toggle(LED_ID_RED);
-		for(int i =0;i<900000;i++);
-		printf("Task 1 \n");
+			led_toggle(LED_ID_RED);
+			task_delay(2000);
+			#ifdef DEBUG
+				printf("Task 1 \n");
+			#endif
 	}
 }
 
 void task2_handler(void){
 	while(1){
-		led_toggle(LED_ID_BLUE);
-		for(int i =0;i<30000;i++);
-		printf("Task 2 \n");
+			led_toggle(LED_ID_GREEN);
+			task_delay(2000);
+			#ifdef DEBUG
+				printf("Task 2 \n");
+			#endif
 	}
 }
 
 void task3_handler(void){
 	while(1){
-		led_toggle(LED_ID_ORANGE);
-		for(int i =0;i<100000;i++);
-		printf("Task 3 \n");
+			led_toggle(LED_ID_BLUE);
+			task_delay(1000);
+			#ifdef DEBUG
+				printf("Task 3 \n");
+			#endif
 	}
 }
 
 void task4_handler(void){
 	while(1){
-		led_toggle(LED_ID_GREEN);
-		for(int i =0;i<500000;i++);
-		printf("Task 4 \n");
+			led_toggle(LED_ID_ORANGE);
+			task_delay(5000);
+			#ifdef DEBUG
+				printf("Task 4 \n");
+			#endif
 	}
 }
+
+void idle_task_handler(void){
+	while(1){
+		__asm volatile("WFI");
+	}
+}
+
 
 void enable_processor_faults(void){
 	volatile uint32_t *pSHCSR = (uint32_t*)0xE000ED24;
@@ -204,46 +267,54 @@ __attribute__((naked)) void start_first_task(void){
 }
 void __attribute__((naked)) SVC_Handler(void){
     __asm volatile(
-        // Figure out which SVC number was called
-        // PC on stack points to instruction after SVC
-        // SVC instruction itself is 2 bytes back → read the immediate
-        "MRS R0, PSP              \n"  // get caller's stack
-        "LDR R1, [R0, #24]        \n"  // load stacked PC
-        "LDRB R0, [R1, #-2]       \n"  // read SVC number from instruction
+        /* figure out which SVC number was called                              */
+        /* start_first_task is called from main which runs on MSP             */
+        /* so use MSP to read the stacked frame                               */
+        "MRS R0, MSP              \n"  /* R0 = MSP (caller was on MSP)        */
+        "LDR R1, [R0, #24]        \n"  /* R1 = stacked PC (addr after SVC)   */
+        "LDRB R0, [R1, #-2]       \n"  /* R0 = SVC number from instruction   */
+
         "CMP R0, #0               \n"
         "BEQ svc_start_task       \n"
         "CMP R0, #1               \n"
         "BEQ svc_something_else   \n"
-        "BX LR                    \n"  // unknown SVC, just return
+        "BX LR                    \n"  /* unknown SVC, just return            */
 
         "svc_start_task:          \n"
-        "LDR R0, =psp_of_tasks    \n"
-        "LDR R1, =current_task    \n"
-        "LDRB R1, [R1]            \n"
-        "LDR R0, [R0, R1, LSL #2]\n"
-        "MSR PSP, R0              \n"
+        /* get tcb[current_task].psp_value                                    */
+        "LDR R0, =tcb             \n"  /* R0 = base address of tcb array      */
+        "LDR R1, =current_task    \n"  /* R1 = address of current_task var    */
+        "LDRB R1, [R1]            \n"  /* R1 = current_task index (0-3)       */
+        "MOV R2, #12              \n"  /* R2 = sizeof(TCB_t) = 12 bytes       */
+        "MUL R1, R1, R2           \n"  /* R1 = current_task * 12              */
+        "LDR R0, [R0, R1]         \n"  /* R0 = tcb[current_task].psp_value    */
+        "MSR PSP, R0              \n"  /* PSP = task's saved stack pointer     */
+
+        /* switch Thread mode to use PSP                                       */
         "MRS R0, CONTROL          \n"
-        "ORR R0, R0, #0x02        \n"
+        "ORR R0, R0, #0x02        \n"  /* set SPSEL bit                       */
         "MSR CONTROL, R0          \n"
-        "ISB                      \n"
-        "MRS R0, PSP              \n"
-        "LDM R0!, {R4-R11}        \n"
-        "MSR PSP, R0              \n"
-        "LDR LR, =0xFFFFFFFD      \n"
+        "ISB                      \n"  /* flush pipeline                      */
+
+        /* pop software frame (R4-R11) from task stack                        */
+        "MRS R0, PSP              \n"  /* R0 = PSP (points at R4 slot)        */
+        "LDM R0!, {R4-R11}        \n"  /* pop R4-R11, R0 advances to HW frame */
+        "MSR PSP, R0              \n"  /* update PSP                          */
+
+        /* trigger exception return → hardware pops R0-R3,R12,LR,PC,xPSR     */
+        "LDR LR, =0xFFFFFFFD      \n"  /* EXC_RETURN: Thread mode, PSP        */
         "BX LR                    \n"
 
         "svc_something_else:      \n"
-        // handle SVC #1 here
         "BX LR                    \n"
     );
 }
-
 __attribute__((naked)) void switch_sp_to_psp(void){
 	//Load PSP with current task private stack pointer
 	__asm volatile (
 	    "MSR PSP, %0"     // assembly instruction
 	    :                 // output operands
-	    : "r"(psp_of_tasks[current_task]) // input operand
+	    : "r"(tcb[current_task].psp_value) // input operand
 	);
 	__asm volatile ("MRS R0,CONTROL");
 	__asm volatile ("ORR R0, R0, #0x02 ");

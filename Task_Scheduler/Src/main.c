@@ -18,6 +18,7 @@
 
 #include "main.h"
 #include "SysTick.h"
+#include "led.h"
 
 uint32_t psp_of_tasks[MAX_TASKS];
 
@@ -36,6 +37,7 @@ int main(void)
 	init_tasks();
 	enable_processor_faults();
 	sysTick_init(1000);
+	led_init();
 	switch_sp_to_psp();
 	start_first_task();
 	for(;;);
@@ -147,25 +149,34 @@ void init_tasks(void) {
     psp_of_tasks[3] = (uint32_t)init_task_stack(task4_stack + SIZE_TASK_STACK, task4_handler);
 }
 void task1_handler(void){
+	//Red LED
 	while(1){
+		led_toggle(LED_ID_RED);
+		for(int i =0;i<900000;i++);
 		printf("Task 1 \n");
 	}
 }
 
 void task2_handler(void){
 	while(1){
+		led_toggle(LED_ID_BLUE);
+		for(int i =0;i<30000;i++);
 		printf("Task 2 \n");
 	}
 }
 
 void task3_handler(void){
 	while(1){
+		led_toggle(LED_ID_ORANGE);
+		for(int i =0;i<100000;i++);
 		printf("Task 3 \n");
 	}
 }
 
 void task4_handler(void){
 	while(1){
+		led_toggle(LED_ID_GREEN);
+		for(int i =0;i<500000;i++);
 		printf("Task 4 \n");
 	}
 }
